@@ -73,12 +73,7 @@ the data format for each file is :
     7)  F2-Ionize - Contribution of Ionization to f2
     8)  F2-Excite - Contribution of Excitation to f2
     9)  Coherent (barns) - Coherent Cross Section defined by integrating the above equation.
-
-Then, compute the index of refraction `n` using the relation:
-    n = 1 - delta - beta = 1 - (r0/2*pi)*wavelen^2 \sum_i (x_i * f_i)
-where:
-    x_i = number of atoms of type i per unit volume
-    f_i = f1 + if2
+    
 """
 
 import os
@@ -95,7 +90,7 @@ rootpath += '/xscatter_data'
 ### CONSTANTS
 r_e = 2.8179403262e-15        # classical electron radius, m
 N_A = 6.02214076e+23          # Avogadro's number, num/mol
-pi = 3.141592653589793
+pi = np.pi
 h  = 6.62607015e-34           # Planck constant, J/Hz
 c = 299792458.0               # speed of light, m/s
 J_eV = 1.602176565e-19        # J per eV conversion
@@ -111,7 +106,7 @@ elements =  ['H','He','Li','Be','B','C','N','O','F','Ne','Na','Mg','Al','Si',\
 
 
 def get_wavelen(energy):
-    """energy in keV -> returns wavelength in m"""
+    # energy in keV -> returns wavelength in m
     return 1e-3*h*c/(energy*J_eV)
 
 def get_filename(elem, elem_format=ELEM_FORMAT_DEFAULT):

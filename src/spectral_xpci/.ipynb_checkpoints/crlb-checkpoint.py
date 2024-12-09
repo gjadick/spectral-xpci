@@ -1,36 +1,91 @@
-import numpy as np
+# import numpy as np
 
-def crlb_2mat_sq(Nx, dx, w, ts, R, mus, deltas):
-    t1, t2 = ts
-    kx = np.fft.fftfreq(Nx, dx)
-    KX, KY = jnp.meshgrid(kx, ky)
-    F = (w**2) * np.sinc(w*KX) * np.sinc(w*KY)
+import jax.numpy as jnp
+from jax.image import scale_and_translate
+from src.spectral_xpci.simulate import PI, apply_psf
+from src.spectral_xpci.xscatter import get_wavelen, get_delta_beta_mix
 
-    # Define the material-dependent matrices
-    # TODO : reshape Rs so you can vary those instead of mus, deltas
-    K2 = 4 * PI**2 * (KX**2 + KY**2)
-    A11 = mus[0,0] - (R * K2 * deltas[0,0])
-    A12 = mus[1,0] - (R * K2 * deltas[1,0])
-    A21 = mus[0,1] - (R * K2 * deltas[0,1])
-    A22 = mus[1,1] - (R * K2 * deltas[1,1])
 
-    # Signals
-    m1 = np.exp(np.fft.ifft2(t1*F*A11 + t2*F*A12)).real    
-    m2 = np.exp(np.fft.ifft2(t1*F*A21 + t2*F*A22)).real
+def detect_img(x, in_px, out_Nx, out_px, det_fwhm=None, normalize=False):
+    """
+    create the detector resampling function
+    this should be applied to both signals m and partials dm/dt before the Fisher info calc.
+    """
+    out_shape = [out_Nx, out_Nx]
+    scale = jnp.array([in_px/out_px, in_px/out_px])
+    translation = -0.5 * (scale*jnp.array(x.shape) - jnp.array(out_shape))
+    total = x.sum()
+    x = scale_and_translate(x, out_shape, (0,1), scale, translation, method='linear')
+    if normalize:
+        x = x * (total / x.sum())
+    if det_fwhm is not None:
+        x = apply_psf(x, x.shape[0]*out_px, out_px, fwhm=det_fwhm, psf='lorentzian', kernel_width=0.1)
+    return x
 
-    # Partial derivatives
-    dm11 = m1 * np.fft.ifft2(F*A11).real
-    dm12 = m1 * np.fft.ifft2(F*A12).real
-    dm21 = m2 * np.fft.ifft2(F*A21).real
-    dm22 = m2 * np.fft.ifft2(F*A22).real    
 
-    # Fisher information
-    I11 = np.sum((dm11**2/m1)   + (dm21**2/m2))
-    I12 = np.sum((dm11*dm12/m1) + (dm21*dm22/m2))
-    I21 = np.sum((dm12*dm11/m1) + (dm22*dm21/m2))
-    I22 = np.sum((dm12**2/m1)   + (dm22**2/m2))
-    I = np.array([[I11, I12], [I21, I22]])
+def crlb_2matdecomp_sq(deltas, mus, Rs, Ts, w, Nx, dx, det_Nx, det_dx, det_fwhm, I0=1.0):
+    """
+    mus, deltas, Rs:
+        axis=0: material j
+        axis=1: acquisition i (energy OR propdist)
+    Ts: basis material thicknesses
+    w: rect width
+    Nx, dx: object dimensions (probably upsampled for simulation purposes)
+    det_Nx, det_dx, det_fwhm: detector parameters
+    """
 
-    CRLBs = np.linalg.inv(I).diagonal()
+    kx = jnp.fft.fftfreq(Nx, d=dx)
+    KX, KY = jnp.meshgrid(kx, kx)
+    sinc2D = w**2 * jnp.sinc(w*KX) * jnp.sinc(w*KY) / dx**2    # normalize rect amplitude = 1
+
+    def get_A(i, j):
+        return mus[j,i] - (Rs[j,i] * (KX**2 + KY**2) * deltas[j,i]) 
+        
+    def get_m(i):
+        iFT = jnp.fft.fftshift(jnp.fft.ifft2(sinc2D * (get_A(i,0)*Ts[0] + get_A(i,1)*Ts[1]))).real
+        return I0 * jnp.exp(-detect_img(iFT, dx, det_Nx, det_dx, det_fwhm))
+
+    def get_dm_dA(mi, Aij):
+        iFT = jnp.fft.fftshift(jnp.fft.ifft2(sinc2D * Aij)).real
+        return mi * detect_img(iFT, dx, det_Nx, det_dx, det_fwhm)
     
-    return CRLBs
+    F = jnp.zeros([2,2])
+    for i in range(2):
+        mi = get_m(i)
+        dmi_dA1 = get_dm_dA(mi, get_A(i,0))
+        dmi_dA2 = get_dm_dA(mi, get_A(i,1))
+        F = F.at[0,0].set(F[0,0] + jnp.sum(dmi_dA1**2 / mi))
+        F = F.at[0,1].set(F[0,1] + jnp.sum(dmi_dA1 * dmi_dA2 / mi))
+        F = F.at[1,0].set(F[1,0] + jnp.sum(dmi_dA2 * dmi_dA1 / mi))
+        F = F.at[1,1].set(F[1,1] + jnp.sum(dmi_dA2**2 / mi))
+    crlbs = jnp.linalg.diagonal(jnp.linalg.inv(F))
+
+    return crlbs
+
+
+def get_acquisition_info(Es, Rs, matcomp1, density1, t1, matcomp2, density2, t2):
+
+    energies = jnp.atleast_1d(Es)
+    propdists = jnp.atleast_1d(Rs)
+    thicknesses = jnp.atleast_1d([t1, t2])
+    
+    Ni = max(energies.size, propdists.size)
+    Nj = 2  
+    assert Ni == 2  # only 2x2 currently supported!
+    
+    if energies.size < Ni:
+        energies = jnp.tile(energies, Ni)
+    elif propdists.size < Ni: 
+        propdists = jnp.tile(propdists, Ni)
+    
+    mat1_dn, mat1_beta = get_delta_beta_mix(matcomp1, energies, density1)
+    mat2_dn, mat2_beta = get_delta_beta_mix(matcomp2, energies, density2)
+
+    deltas = jnp.array([mat1_dn, mat2_dn])
+    mus = 2 * (2 * PI / get_wavelen(energies)) * jnp.array([mat1_beta, mat2_beta])
+    propdists = jnp.tile(propdists, [Nj, 1])
+
+    return deltas, mus, propdists, thicknesses
+
+
+
