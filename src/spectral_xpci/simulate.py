@@ -16,11 +16,12 @@ def get_wavelen(energy):
     return 1e-3*h*c/(energy*J_eV)
 
 
-def simulate_projection(beta_proj, dn_proj, phantom_px, 
+def simulate_projection(beta_proj, dn_proj, phantom_px, phantom_N,
                         det_shape, det_px, det_fwhm, 
                         energy, R, I0,
                         det_psf='lorentzian', n_medium=1, N_pad=100, key=jax.random.PRNGKey(42)):
     """
+    cailey added new input parameter phantom_N 01/18/25, delete this note after merge
     beta_proj :  ∫ beta(x,y,z) dz
     dn_proj :  ∫ delta(x,y,z) dz
     """
@@ -34,7 +35,7 @@ def simulate_projection(beta_proj, dn_proj, phantom_px,
         spectrum = get_wavelen(energy),
         spectral_density = 1.0,
     )
-    field = field / field.intensity.max()**0.5  # normalize
+    field = field / field.intensity.max()**0.5 / ((phantom_N / det_shape[0])**2) # normalize
     cval = field.intensity.max()
 
     exit_field = cx.thin_sample(field, beta_proj[None, ..., None, None], dn_proj[None, ..., None, None], 1.0)
@@ -42,7 +43,7 @@ def simulate_projection(beta_proj, dn_proj, phantom_px,
 
     det_resample_func = init_plane_resample(det_shape, (det_px, det_px), resampling_method='linear')
     img = det_resample_func(det_field.intensity.squeeze()[...,None,None], field.dx.ravel()[:1])[...,0,0]
-    img /= img.ravel()[0] 
+    # img /= img.ravel()[0] 
 
     if I0 is not None:
         img = jax.random.poisson(key, I0*img, img.shape) / I0
