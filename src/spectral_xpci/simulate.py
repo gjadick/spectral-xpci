@@ -27,15 +27,16 @@ def simulate_projection(beta_proj, dn_proj, phantom_px, phantom_N,
     """
 
     assert (beta_proj.shape == dn_proj.shape)
-    phantom_fov = beta_proj.shape[0] * phantom_px
+    phantom_fov = phantom_px*phantom_N
+    det_fov = det_px*det_shape[0]
     
     field = cx.plane_wave(
         shape = beta_proj.shape, 
         dx = phantom_px,
         spectrum = get_wavelen(energy),
         spectral_density = 1.0,
-    )
-    field = field / field.intensity.max()**0.5 / ((phantom_N / det_shape[0])**2) # normalize
+    )    
+    field = field / field.intensity.max()**0.5 
     cval = field.intensity.max()
 
     exit_field = cx.thin_sample(field, beta_proj[None, ..., None, None], dn_proj[None, ..., None, None], 1.0)
@@ -43,16 +44,17 @@ def simulate_projection(beta_proj, dn_proj, phantom_px, phantom_N,
 
     det_resample_func = init_plane_resample(det_shape, (det_px, det_px), resampling_method='linear')
     img = det_resample_func(det_field.intensity.squeeze()[...,None,None], field.dx.ravel()[:1])[...,0,0]
-    # img /= img.ravel()[0] 
+    img = img / (det_px/phantom_px)**2  # normalize to new pixel size
 
     if I0 is not None:
         img = jax.random.poisson(key, I0*img, img.shape) / I0
 
     if det_psf is not None:
-        img = apply_psf(img, phantom_fov, det_px, psf=det_psf, fwhm=det_fwhm, kernel_width=0.1)
+        img = apply_psf(img, det_fov, det_px, psf=det_psf, fwhm=det_fwhm, kernel_width=0.1)
 
     return img
 
+    
 
 def lorentzian2D(x, y, fwhm, normalize=True):
     """
@@ -76,7 +78,7 @@ def apply_psf(img, FOV, dx, fwhm=None, kernel_width=1, psf='lorentzian'):
         assert fwhm is not None
         
         small_FOV = kernel_width * FOV   # reduce kernel size to improve convolution time
-        x = jnp.arange(-small_FOV, small_FOV, dx) + dx
+        x = jnp.arange(-small_FOV, small_FOV, dx) + dx/2
         psf = lorentzian2D(x, x, fwhm)
         
         img_pad = jnp.pad(img, psf.shape, constant_values=img[0,0])    # pad img to account for fillvalue = 0
