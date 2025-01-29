@@ -60,7 +60,8 @@ def make_fiber_phantom(N, Nz, dx, fiber_width, energy, fiber_material, backgroun
 
     
 def simulate_multislice(obj_beta, obj_delta, phantom_dx, phantom_dz, phantom_N, z_slices, det_shape, det_dx, det_fwhm, energy, propdist, I0,
-                       det_psf='lorentzian', N_pad=100, n_medium=1, n_avg=1, key=jax.random.PRNGKey(3)
+                       det_psf='lorentzian', N_pad=100, n_medium=1, n_avg=1, key=jax.random.PRNGKey(3),
+                        dzlist=None
 ):
 
     phantom_shape = jnp.array([z_slices, phantom_N, phantom_N])
@@ -78,9 +79,16 @@ def simulate_multislice(obj_beta, obj_delta, phantom_dx, phantom_dz, phantom_N, 
     # modulate field thru sample
     # exit_field = cx.multislice_thick_sample(field, obj_beta, obj_delta, n_avg, phantom_dz, N_pad)
     field_k = field
+    if dzlist is not None:
+        all_dz = dzlist
+    else:
+        all_dz = np.ones(z_slices) * phantom_dz
+        
     for k in range(z_slices):
-        field_k = cx.thin_sample(field_k, obj_beta[k][None, ..., None, None], obj_delta[k][None, ..., None, None], phantom_dz)
-        field_k = cx.transfer_propagate(field_k, phantom_dz, n_medium, N_pad, cval=cval, mode='same')
+        # field_k = cx.thin_sample(field_k, obj_beta[k][None, ..., None, None], obj_delta[k][None, ..., None, None], phantom_dz)
+        # field_k = cx.transfer_propagate(field_k, phantom_dz, n_medium, N_pad, cval=cval, mode='same')
+        field_k = cx.thin_sample(field_k, obj_beta[k][None, ..., None, None], obj_delta[k][None, ..., None, None], all_dz[k])
+        field_k = cx.transfer_propagate(field_k, all_dz[k], n_medium, N_pad, cval=cval, mode='same')
     exit_field = field_k
     
     # propagate thru free space to the detector

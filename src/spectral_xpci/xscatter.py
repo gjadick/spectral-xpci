@@ -114,6 +114,16 @@ def get_wavelen(energy):
     """energy in keV -> returns wavelength in m"""
     return 1e-3*h*c/(energy*J_eV)
 
+def get_wavenum(energy):
+    """energy in keV -> returns wavenum in m^-1"""
+    try:
+        len(energy)
+        energy = np.array(energy)
+    except:
+        pass  
+    return 2*np.pi / get_wavelen(energy)
+
+
 def get_filename(elem, elem_format=ELEM_FORMAT_DEFAULT):
     """
     Get the filename with data for a given element.
