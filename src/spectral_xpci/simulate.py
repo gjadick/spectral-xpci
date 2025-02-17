@@ -40,6 +40,7 @@ def simulate_projection(beta_proj, dn_proj, phantom_px, phantom_N,
     cval = field.intensity.max()
 
     exit_field = cx.thin_sample(field, beta_proj[None, ..., None, None], dn_proj[None, ..., None, None], 1.0)
+    
     det_field = cx.transfer_propagate(exit_field, R, n_medium, N_pad, cval=cval, mode='same')
 
     det_resample_func = init_plane_resample(det_shape, (det_px, det_px), resampling_method='linear')
