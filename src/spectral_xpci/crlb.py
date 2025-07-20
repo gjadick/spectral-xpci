@@ -89,3 +89,42 @@ def get_acquisition_info(Es, Rs, matcomp1, density1, t1, matcomp2, density2, t2)
 
 
 
+# def get_A0(deltas, mus, Rs, Nx, dx):
+##### # this is just mus.T
+#     As = get_As(deltas, mus, Rs, Nx, dx)
+#     return As[:,:,0,0]
+
+
+def get_As(deltas, mus, Rs, Nx, dx):
+    """
+    mus, deltas, Rs:
+        axis=0: material j
+        axis=1: acquisition i (energy OR propdist)
+    Ts: basis material thicknesses
+    w: rect width
+    Nx, dx: object dimensions (probably upsampled for simulation purposes)
+    det_Nx, det_dx, det_fwhm: detector parameters
+    """
+
+    kx = jnp.fft.fftfreq(Nx, d=dx)
+    KX, KY = jnp.meshgrid(kx, kx)
+
+    def get_A(i, j):
+        return mus[j,i] - (Rs[j,i] * (KX**2 + KY**2) * deltas[j,i]) 
+        
+    A11 = get_A(0,0)
+    A12 = get_A(0,1)
+    A21 = get_A(1,0)
+    A22 = get_A(1,1)
+
+    return np.array([[A11, A12],[A21, A22]])
+
+
+def get_condA_matrix(deltas, mus, Rs, Nx, dx):
+    As = get_As(deltas, mus, Rs, Nx, dx)
+    condmat = np.zeros([Nx, Nx])
+    for i in range(Nx):
+        for j in range(Nx):
+            condmat[i,j] = np.linalg.cond(As[:,:,i,j])
+    return condmat
+    
